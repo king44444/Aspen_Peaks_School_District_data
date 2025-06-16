@@ -112,26 +112,26 @@ st.pyplot(
     avg_salary.plot.pie(autopct="%1.1f%%", figsize=(6,6), ylabel="", title="Budget Share by Role").get_figure()
 )
 
-# === Management vs Frontline Comparison ===
-st.subheader("Management vs Frontline Comparison")
+# === Teachers vs Administrators Comparison ===
+st.subheader("Teachers vs Administrators Comparison")
 
-frontline = filtered_data[filtered_data['functional_area'] == "Instruction"]
-management = filtered_data[filtered_data['functional_area'] == "School Administration"]
+teachers = filtered_data[filtered_data['functional_area'] == "Instruction"]
+administrators = filtered_data[filtered_data['functional_area'] == "School Administration"]
 
-employee_counts = [len(frontline), len(management)]
-salary_sums = [frontline['net_amount'].sum(), management['net_amount'].sum()]
-avg_salaries = [frontline['net_amount'].mean(), management['net_amount'].mean()]
+employee_counts = [len(teachers), len(administrators)]
+salary_sums = [teachers['net_amount'].sum(), administrators['net_amount'].sum()]
+avg_salaries = [teachers['net_amount'].mean(), administrators['net_amount'].mean()]
 labels = ['Teachers', 'Admins']
 colors = ['#4e79a7', '#f28e2c']
 
 # Row 1: Employee Count
 col1, col2, col3 = st.columns([1.5, 1, 1.5])
 with col1:
-    st.metric("Teachers (Frontline)", f"{employee_counts[0]} employees")
+    st.metric("Teachers", f"{employee_counts[0]} employees")
 with col2:
     st.pyplot(small_pie_chart(employee_counts, labels, colors))
 with col3:
-    st.metric("Administrators (Management)", f"{employee_counts[1]} employees")
+    st.metric("Administrators", f"{employee_counts[1]} employees")
 
 # Row 2: Total Salary
 col1, col2, col3 = st.columns([1.5, 1, 1.5])
@@ -320,31 +320,6 @@ if len(areas_to_plot) > 0:
 else:
     st.info("Not enough data for histogram visualization. Need at least 3 employees per role.")
 
-# Salary Equity Insights
-st.markdown("#### Salary Equity Insights")
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    # Highest variability roles
-    high_variability = salary_stats.nlargest(3, 'Std Dev')[['Employee Count', 'Std Dev']]
-    st.markdown("**Highest Salary Variability:**")
-    for area, row in high_variability.iterrows():
-        st.write(f"• {area}: ${row['Std Dev']:,.0f} std dev ({row['Employee Count']} employees)")
-
-with col2:
-    # Most equitable roles (lowest coefficient of variation)
-    salary_stats['CV'] = salary_stats['Std Dev'] / salary_stats['Mean Salary']
-    low_cv = salary_stats[salary_stats['Employee Count'] >= 3].nsmallest(3, 'CV')[['Employee Count', 'CV']]
-    st.markdown("**Most Salary Equity (Low Variation):**")
-    for area, row in low_cv.iterrows():
-        st.write(f"• {area}: {row['CV']:.2f} coeff var ({row['Employee Count']} employees)")
-
-with col3:
-    # Largest salary ranges
-    large_ranges = salary_stats.nlargest(3, 'Salary Range')[['Employee Count', 'Salary Range']]
-    st.markdown("**Largest Salary Ranges:**")
-    for area, row in large_ranges.iterrows():
-        st.write(f"• {area}: ${row['Salary Range']:,.0f} range ({row['Employee Count']} employees)")
 
 # Sample job titles for each role
 st.subheader("Sample Job Titles by Functional Area")
@@ -367,5 +342,5 @@ st.markdown("""
 - **Report: 61.9% to Instruction**  
 - **App: {}% to Teachers**  
 """.format(
-    round((frontline['net_amount'].sum() / filtered_data['net_amount'].sum()) * 100)
+    round((teachers['net_amount'].sum() / filtered_data['net_amount'].sum()) * 100)
 ))
