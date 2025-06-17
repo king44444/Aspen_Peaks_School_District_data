@@ -51,6 +51,11 @@ def classify(row):
 
 df['functional_area'] = df.apply(classify, axis=1)
 
+# Apply district administration exclusion for Aspen Peaks mode
+if filter_aspen:
+    df = df[df['functional_area'] != "District Administration"]
+    st.info("Aspen Peaks mode enabled — District-level administrators have been excluded from this view.")
+
 def is_fte(row):
     title = row['title'].lower()
     if any(x in title for x in ["hourly", "substitute", "part-time", "temp"]):
@@ -132,6 +137,7 @@ with st.expander("📊 Data Source & Important Disclaimers", expanded=False):
     - **Classification Methodology**: The grouping of employees into functional areas (Instruction, Administration, etc.) represents analytical interpretation based on job titles and descriptions
     - **Interpretive Elements**: While the classification system is systematic and logical, it may not perfectly align with the district's internal organizational structure
     - **Geographic Boundaries**: The "Aspen Peaks District" filter represents schools serving communities around American Fork, Lehi, Highland, and surrounding areas within Alpine School District
+    - **District-level Employees Excluded**: When the Aspen Peaks filter is enabled, district-level administrators are excluded from analysis. This reflects local school board priorities and enables clearer analysis of site-based staffing and compensation.
     
     ### Best Practices for Interpretation
     - Focus on salary ranges and medians rather than individual outliers
@@ -242,19 +248,27 @@ with col1:
 with col2:
     st.pyplot(small_pie_chart(avg_salaries_district, labels_district, colors_district))
 with col3:
-    st.metric("Avg District Admin Salary", f"${int(round(avg_salaries_district[1])):,}")
+    if pd.isna(avg_salaries_district[1]):
+        st.metric("Avg District Admin Salary", "N/A (excluded from Aspen Peaks view)")
+    else:
+        st.metric("Avg District Admin Salary", f"${int(round(avg_salaries_district[1])):,}")
 
 # Summary comparison table
 st.markdown("#### Summary: Teacher vs Administrator Compensation")
+
+# Calculate district admin values with null safety
+district_avg_salary = "N/A (excluded)" if len(district_admins) == 0 or pd.isna(district_admins['net_amount'].mean()) else f"${int(round(district_admins['net_amount'].mean())):,}"
+district_total_budget = "N/A (excluded)" if len(district_admins) == 0 else f"${int(round(district_admins['net_amount'].sum())):,}"
+
 comparison_data = {
     'Role': ['Teachers', 'School Administrators', 'District Administrators'],
     'Employee Count': [len(teachers), len(school_admins), len(district_admins)],
     'Average Salary': [f"${int(round(teachers['net_amount'].mean())):,}", 
                       f"${int(round(school_admins['net_amount'].mean())):,}", 
-                      f"${int(round(district_admins['net_amount'].mean())):,}"],
+                      district_avg_salary],
     'Total Budget': [f"${int(round(teachers['net_amount'].sum())):,}", 
                     f"${int(round(school_admins['net_amount'].sum())):,}", 
-                    f"${int(round(district_admins['net_amount'].sum())):,}"]
+                    district_total_budget]
 }
 comparison_df = pd.DataFrame(comparison_data)
 st.dataframe(comparison_df, use_container_width=True)
