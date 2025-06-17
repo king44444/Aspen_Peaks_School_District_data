@@ -84,12 +84,63 @@ def format_currency_column(df, column='net_amount'):
 # Pie chart helper
 def small_pie_chart(values, labels, colors):
     fig, ax = plt.subplots(figsize=(2, 2))
-    ax.pie(values, labels=None, colors=colors, startangle=90, autopct='%1.1f%%', textprops={'fontsize': 7})
+    
+    # Validate input data
+    if not values or len(values) == 0:
+        ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+        ax.axis('off')
+        return fig
+    
+    # Check for NaN or invalid values
+    import numpy as np
+    clean_values = []
+    clean_colors = []
+    clean_labels = []
+    
+    for i, val in enumerate(values):
+        if not (np.isnan(val) or val <= 0):
+            clean_values.append(val)
+            if i < len(colors):
+                clean_colors.append(colors[i])
+            if i < len(labels):
+                clean_labels.append(labels[i])
+    
+    # If no valid data after cleaning, show "No Data"
+    if not clean_values:
+        ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+        ax.axis('off')
+        return fig
+    
+    # Create pie chart with clean data
+    ax.pie(clean_values, labels=None, colors=clean_colors, startangle=90, autopct='%1.1f%%', textprops={'fontsize': 7})
     ax.axis('equal')
     return fig
 
-# Title
+# Title and Attribution
 st.title("Alpine School District - Salary Analysis")
+st.markdown("*Analysis by Michael King*")
+
+# Data Source and Disclaimer
+with st.expander("📊 Data Source & Important Disclaimers", expanded=False):
+    st.markdown("""
+    ### Data Source
+    All salary data comes directly from **Utah's official transparency portal** at [transparent.utah.gov](https://transparent.utah.gov). 
+    The underlying financial information represents official state records of public employee compensation.
+    
+    ### Important Disclaimers
+    - **Data Accuracy**: The raw salary amounts are official state data and are accurate as reported
+    - **Classification Methodology**: The grouping of employees into functional areas (Instruction, Administration, etc.) represents analytical interpretation based on job titles and descriptions
+    - **Interpretive Elements**: While the classification system is systematic and logical, it may not perfectly align with the district's internal organizational structure
+    - **Geographic Boundaries**: The "Aspen Peaks District" filter represents schools serving communities around American Fork, Lehi, Highland, and surrounding areas within Alpine School District
+    
+    ### Best Practices for Interpretation
+    - Focus on salary ranges and medians rather than individual outliers
+    - Consider these groupings as analytical tools, not official district classifications
+    - Cross-reference findings with official district budget documents when possible
+    - **Total Compensation**: The figures shown include both salaries and employee benefits (approximately 70% salary, 30% benefits)
+    """)
+
+st.markdown("---")
 
 # Main metrics
 st.metric("Total Unique Employees", filtered_data['employee_name'].nunique())
@@ -108,48 +159,105 @@ st.dataframe(avg_salary.apply(lambda x: f"${int(round(x)):,}"))
 
 # Pie chart - Proportion of Budget per Role Type
 st.subheader("Salary Distribution by Employee Type")
-st.pyplot(
-    avg_salary.plot.pie(autopct="%1.1f%%", figsize=(6,6), ylabel="", title="Budget Share by Role").get_figure()
-)
+fig = plt.figure(figsize=(6,6))
+plt.pie(list(avg_salary.values), labels=list(avg_salary.index), autopct="%1.1f%%", startangle=90)
+plt.title("Budget Share by Role")
+plt.axis('equal')
+st.pyplot(fig)
 
-# === Teachers vs Administrators Comparison ===
-st.subheader("Teachers vs Administrators Comparison")
+# === Teachers vs School Administrators Comparison ===
+st.subheader("Teachers vs School Administrators")
+st.markdown("*Comparing teachers with principals and school-level administrators*")
 
 teachers = filtered_data[filtered_data['functional_area'] == "Instruction"]
-administrators = filtered_data[filtered_data['functional_area'] == "School Administration"]
+school_admins = filtered_data[filtered_data['functional_area'] == "School Administration"]
 
-employee_counts = [len(teachers), len(administrators)]
-salary_sums = [teachers['net_amount'].sum(), administrators['net_amount'].sum()]
-avg_salaries = [teachers['net_amount'].mean(), administrators['net_amount'].mean()]
-labels = ['Teachers', 'Admins']
+employee_counts_school = [len(teachers), len(school_admins)]
+salary_sums_school = [teachers['net_amount'].sum(), school_admins['net_amount'].sum()]
+avg_salaries_school = [teachers['net_amount'].mean(), school_admins['net_amount'].mean()]
+labels_school = ['Teachers', 'School Admins']
 colors = ['#4e79a7', '#f28e2c']
 
 # Row 1: Employee Count
 col1, col2, col3 = st.columns([1.5, 1, 1.5])
 with col1:
-    st.metric("Teachers", f"{employee_counts[0]} employees")
+    st.metric("Teachers", f"{employee_counts_school[0]} employees")
 with col2:
-    st.pyplot(small_pie_chart(employee_counts, labels, colors))
+    st.pyplot(small_pie_chart(employee_counts_school, labels_school, colors))
 with col3:
-    st.metric("Administrators", f"{employee_counts[1]} employees")
+    st.metric("School Administrators", f"{employee_counts_school[1]} employees")
 
 # Row 2: Total Salary
 col1, col2, col3 = st.columns([1.5, 1, 1.5])
 with col1:
-    st.metric("Total Teacher Salary", f"${int(round(salary_sums[0])):,}")
+    st.metric("Total Teacher Salary", f"${int(round(salary_sums_school[0])):,}")
 with col2:
-    st.pyplot(small_pie_chart(salary_sums, labels, colors))
+    st.pyplot(small_pie_chart(salary_sums_school, labels_school, colors))
 with col3:
-    st.metric("Total Admin Salary", f"${int(round(salary_sums[1])):,}")
+    st.metric("Total School Admin Salary", f"${int(round(salary_sums_school[1])):,}")
 
 # Row 3: Average Salary
 col1, col2, col3 = st.columns([1.5, 1, 1.5])
 with col1:
-    st.metric("Avg Teacher Salary", f"${int(round(avg_salaries[0])):,}")
+    st.metric("Avg Teacher Salary", f"${int(round(avg_salaries_school[0])):,}")
 with col2:
-    st.pyplot(small_pie_chart(avg_salaries, labels, colors))
+    st.pyplot(small_pie_chart(avg_salaries_school, labels_school, colors))
 with col3:
-    st.metric("Avg Admin Salary", f"${int(round(avg_salaries[1])):,}")
+    st.metric("Avg School Admin Salary", f"${int(round(avg_salaries_school[1])):,}")
+
+# === Teachers vs District Administrators Comparison ===
+st.subheader("Teachers vs District Administrators")
+st.markdown("*Comparing teachers with superintendents, directors, and district-level staff*")
+
+district_admins = filtered_data[filtered_data['functional_area'] == "District Administration"]
+
+employee_counts_district = [len(teachers), len(district_admins)]
+salary_sums_district = [teachers['net_amount'].sum(), district_admins['net_amount'].sum()]
+avg_salaries_district = [teachers['net_amount'].mean(), district_admins['net_amount'].mean()]
+labels_district = ['Teachers', 'District Admins']
+colors_district = ['#4e79a7', '#e15759']
+
+# Row 1: Employee Count
+col1, col2, col3 = st.columns([1.5, 1, 1.5])
+with col1:
+    st.metric("Teachers", f"{employee_counts_district[0]} employees")
+with col2:
+    st.pyplot(small_pie_chart(employee_counts_district, labels_district, colors_district))
+with col3:
+    st.metric("District Administrators", f"{employee_counts_district[1]} employees")
+
+# Row 2: Total Salary
+col1, col2, col3 = st.columns([1.5, 1, 1.5])
+with col1:
+    st.metric("Total Teacher Salary", f"${int(round(salary_sums_district[0])):,}")
+with col2:
+    st.pyplot(small_pie_chart(salary_sums_district, labels_district, colors_district))
+with col3:
+    st.metric("Total District Admin Salary", f"${int(round(salary_sums_district[1])):,}")
+
+# Row 3: Average Salary
+col1, col2, col3 = st.columns([1.5, 1, 1.5])
+with col1:
+    st.metric("Avg Teacher Salary", f"${int(round(avg_salaries_district[0])):,}")
+with col2:
+    st.pyplot(small_pie_chart(avg_salaries_district, labels_district, colors_district))
+with col3:
+    st.metric("Avg District Admin Salary", f"${int(round(avg_salaries_district[1])):,}")
+
+# Summary comparison table
+st.markdown("#### Summary: Teacher vs Administrator Compensation")
+comparison_data = {
+    'Role': ['Teachers', 'School Administrators', 'District Administrators'],
+    'Employee Count': [len(teachers), len(school_admins), len(district_admins)],
+    'Average Salary': [f"${int(round(teachers['net_amount'].mean())):,}", 
+                      f"${int(round(school_admins['net_amount'].mean())):,}", 
+                      f"${int(round(district_admins['net_amount'].mean())):,}"],
+    'Total Budget': [f"${int(round(teachers['net_amount'].sum())):,}", 
+                    f"${int(round(school_admins['net_amount'].sum())):,}", 
+                    f"${int(round(district_admins['net_amount'].sum())):,}"]
+}
+comparison_df = pd.DataFrame(comparison_data)
+st.dataframe(comparison_df, use_container_width=True)
 
 # FTE vs Non-FTE Summary
 st.subheader("FTE vs Non-FTE Comparison")
@@ -211,9 +319,10 @@ for area in salary_stats.index:
         plot_labels.append(f"{area}\n(n={len(role_data)})")
 
 # Create box plot
-box_plot = ax.boxplot(plot_data, labels=plot_labels, patch_artist=True, 
+box_plot = ax.boxplot(plot_data, patch_artist=True, 
                       boxprops=dict(facecolor='lightblue', alpha=0.7),
                       medianprops=dict(color='red', linewidth=2))
+ax.set_xticklabels(plot_labels)
 
 ax.set_title('Salary Distribution by Functional Area', fontsize=14, fontweight='bold')
 ax.set_ylabel('Salary ($)', fontsize=12)
@@ -265,9 +374,13 @@ with col2:
     
     # Add labels for each point
     for i, area in enumerate(salary_stats.index):
-        ax.annotate(area, (salary_stats.loc[area, 'Employee Count'], 
-                          salary_stats.loc[area, 'Mean Salary']),
-                   xytext=(5, 5), textcoords='offset points', fontsize=9)
+        try:
+            x_val = int(pd.to_numeric(salary_stats.loc[area, 'Employee Count']))
+            y_val = float(pd.to_numeric(salary_stats.loc[area, 'Mean Salary']))
+            ax.annotate(area, (x_val, y_val), xytext=(5, 5), textcoords='offset points', fontsize=9)
+        except (ValueError, TypeError):
+            # Skip annotation if conversion fails
+            continue
     
     ax.set_xlabel('Number of Employees')
     ax.set_ylabel('Average Salary ($)')
