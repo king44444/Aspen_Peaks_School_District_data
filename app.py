@@ -144,7 +144,42 @@ with st.expander("📊 Data Source & Important Disclaimers", expanded=False):
     - Consider these groupings as analytical tools, not official district classifications
     - Cross-reference findings with official district budget documents when possible
     - **Total Compensation**: The figures shown include both salaries and employee benefits (approximately 70% salary, 30% benefits)
+    
+    ### Disclaimer
+    This tool is still in ALPHA. Data structures, formatting, and features may change. Expect updates and occasional bugs as we improve the experience.
+    
+    ### Author's Note
+    The author's wife is included in this dataset. See her information below:
     """)
+    
+    # Search for and display author's wife record (NIKKI KING at Freedom Elementary)
+    wife_records = df[df['employee_name'].str.contains('KING, NIKKI', case=False, na=False)]
+    
+    if not wife_records.empty:
+        # Get the aggregated salary data for NIKKI KING
+        wife_name = "KING, NIKKI"
+        wife_total = df[df['employee_name'] == wife_name]['net_amount'].sum()
+        wife_functional_area = "Instruction"  # She's primarily a teacher
+        wife_is_fte = True  # She has full-time certified teacher salary
+        
+        # Create a display record matching the target schema format
+        wife_display = pd.DataFrame({
+            'employee_name': [wife_name],
+            'functional_area': [wife_functional_area],
+            'is_fte': [wife_is_fte],
+            'net_amount': [wife_total]
+        })
+        
+        st.markdown("**Author's Wife - Freedom Elementary SPED Teacher:**")
+        st.dataframe(format_currency_column(wife_display), use_container_width=True)
+        
+        # Show breakdown of her compensation (simple display without nested expander)
+        st.markdown("**Compensation Breakdown:**")
+        wife_breakdown = df[df['employee_name'] == wife_name][['org2', 'title', 'net_amount']].copy()
+        wife_breakdown['net_amount'] = wife_breakdown['net_amount'].apply(lambda x: f"${x:,.2f}")
+        st.dataframe(wife_breakdown, use_container_width=True)
+    else:
+        st.markdown("*No matching record found for Freedom Elementary SPED position.*")
 
 st.markdown("---")
 
