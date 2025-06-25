@@ -4,6 +4,8 @@
 
 A comprehensive Streamlit web application for analyzing employee salary data from Alpine School District. This tool provides detailed insights into salary distribution, equity analysis, and compensation patterns across different roles and functional areas.
 
+**🚨 2024 Update:** This analysis is particularly critical as it represents the final year before Alpine School District undergoes significant reorganization and potential district splitting. The 2024 data provides crucial baseline insights for community stakeholders.
+
 ## 📊 Data Source & Methodology
 
 ### Data Source
@@ -36,6 +38,22 @@ streamlit run app.py
 
 ## 🚀 Features
 
+### 🎯 New: Community-Focused Analysis
+- **Key Takeaways Section**: Executive summary highlighting critical insights for community members
+- **Teacher Pay Equity Focus**: Clear analysis of teacher compensation compared to administrators
+- **Budget Priority Analysis**: Shows percentage of district budget allocated to instruction vs. administration
+- **Community Context**: Interprets data implications for teacher retention, recruitment, and district priorities
+
+### 🔒 Privacy Protection
+- **Employee Name Protection**: All employee names converted to initials (e.g., "King, Nikki" → "K, N")
+- **Privacy-Protected Downloads**: CSV exports include only initials, not full names
+- **Secure Data Display**: Top earners and all employee tables show initials only
+
+### 📅 Multi-Year Analysis Capability
+- **Historical Data Support**: Load and analyze data from 2022, 2023, and 2024
+- **Year Selection**: Choose specific years for focused analysis
+- **2024 Priority**: Defaults to 2024 data as the critical baseline before district reorganization
+
 ### Core Analysis
 - **Employee Classification**: Automatic categorization into functional areas (Instruction, Administration, Support, etc.)
 - **FTE vs Non-FTE Analysis**: Comparison between full-time and part-time/substitute employees
@@ -53,7 +71,7 @@ streamlit run app.py
 - **Aspen Peaks District Filter**: Focus analysis on specific school boundaries
 - **Role-based Filtering**: Select specific employee types for targeted analysis
 - **Dynamic Metrics**: Real-time updates based on applied filters
-- **Data Export**: Download cleaned data as CSV for further analysis
+- **Enhanced Data Export**: Privacy-protected CSV downloads with year-specific naming
 
 ## 📊 Sample Visualizations
 

@@ -4,8 +4,79 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import seaborn as sns
 
-# Load data
-df = pd.read_csv("data/Alpine_School_District_2024.csv")
+# Helper function to convert names to initials for privacy
+def convert_to_initials(name):
+    """Convert 'Last, First' format to 'L, F' initials for privacy"""
+    if pd.isna(name) or not isinstance(name, str):
+        return "N/A"
+    
+    # Handle different name formats
+    name = name.strip().upper()
+    if ',' in name:
+        parts = name.split(',')
+        if len(parts) >= 2:
+            last_initial = parts[0].strip()[0] if parts[0].strip() else 'X'
+            first_initial = parts[1].strip()[0] if parts[1].strip() else 'X'
+            return f"{last_initial}, {first_initial}"
+    
+    # Fallback for unusual formats
+    words = name.split()
+    if len(words) >= 2:
+        return f"{words[-1][0]}, {words[0][0]}"
+    elif len(words) == 1:
+        return f"{words[0][0]}, X"
+    
+    return "N/A"
+
+# Multi-year data loading
+@st.cache_data
+def load_salary_data():
+    """Load and combine salary data from available years"""
+    data_files = {
+        2024: "data/Alpine_School_District_2024.csv",
+        2023: "data/Alpine School District_2023.csv", 
+        2022: "data/Alpine School District_2022.csv"
+    }
+    
+    combined_data = []
+    available_years = []
+    
+    for year, file_path in data_files.items():
+        try:
+            df_year = pd.read_csv(file_path)
+            df_year['fiscal_year'] = year
+            combined_data.append(df_year)
+            available_years.append(year)
+        except FileNotFoundError:
+            st.warning(f"Data file for {year} not found: {file_path}")
+            continue
+    
+    if combined_data:
+        combined_df = pd.concat(combined_data, ignore_index=True)
+        return combined_df, available_years
+    else:
+        st.error("No salary data files found!")
+        return pd.DataFrame(), []
+
+# Load all available data
+df_all, available_years = load_salary_data()
+
+# Year selector in sidebar
+st.sidebar.markdown("### Data Year Selection")
+if available_years:
+    selected_year = st.sidebar.selectbox(
+        "Select Year for Analysis", 
+        available_years, 
+        index=0 if 2024 in available_years else 0,
+        help="2024 is the most critical year due to pending district split"
+    )
+    df = df_all[df_all['fiscal_year'] == selected_year].copy()
+    
+    if selected_year == 2024:
+        st.sidebar.info("📊 **2024 Data Selected** - Most current year before district reorganization")
+else:
+    st.error("No data available!")
+    st.stop()
 
 # Aspen Peaks school list (based on city boundaries)
 aspen_peaks_schools = [
@@ -70,6 +141,9 @@ employee_totals = (
     .sum()
     .reset_index()
 )
+
+# Apply privacy protection - convert names to initials
+employee_totals['employee_initials'] = employee_totals['employee_name'].apply(convert_to_initials)
 
 # Sidebar filters
 st.sidebar.header("Filters")
@@ -180,6 +254,81 @@ with st.expander("📊 Data Source & Important Disclaimers", expanded=False):
     #     st.dataframe(wife_breakdown, use_container_width=True)
     # else:
     #     st.markdown("*No matching record found for Freedom Elementary SPED position.*")
+
+st.markdown("---")
+
+# Key Takeaways Section - Community Focus
+st.subheader("🎯 Key Takeaways for Community Members")
+st.markdown("*Critical insights from the salary data analysis*")
+
+with st.expander("📋 Executive Summary - What the Data Shows", expanded=True):
+    # Calculate key metrics for takeaways
+    teachers = filtered_data[filtered_data['functional_area'] == "Instruction"]
+    school_admins = filtered_data[filtered_data['functional_area'] == "School Administration"]
+    district_admins = filtered_data[filtered_data['functional_area'] == "District Administration"]
+    
+    teacher_avg = teachers['net_amount'].mean() if len(teachers) > 0 else 0
+    school_admin_avg = school_admins['net_amount'].mean() if len(school_admins) > 0 else 0
+    district_admin_avg = district_admins['net_amount'].mean() if len(district_admins) > 0 else 0
+    
+    # Calculate teacher pay equity metrics
+    teacher_salary_range = teachers['net_amount'].max() - teachers['net_amount'].min() if len(teachers) > 0 else 0
+    teacher_median = teachers['net_amount'].median() if len(teachers) > 0 else 0
+    
+    # Calculate budget percentage going to instruction
+    total_budget = filtered_data['net_amount'].sum()
+    instruction_budget = teachers['net_amount'].sum()
+    instruction_percentage = (instruction_budget / total_budget * 100) if total_budget > 0 else 0
+    
+    st.markdown(f"""
+    ### 🏫 Teacher Compensation Reality ({selected_year})
+    
+    **💰 Average Teacher Total Compensation:** ${teacher_avg:,.0f}
+    - This includes salary + benefits (approximately 70% salary, 30% benefits)
+    - **Median Teacher Compensation:** ${teacher_median:,.0f} (half of teachers earn less than this)
+    - **Teacher Salary Range:** ${teacher_salary_range:,.0f} (difference between highest and lowest paid teachers)
+    
+    ### 📊 Budget Allocation Priorities
+    - **{instruction_percentage:.1f}% of total compensation** goes to classroom instruction
+    - **{len(teachers):,} teachers** serve the entire district
+    - Teachers represent the **largest employee group** but have **administrative oversight** at multiple levels
+    
+    ### ⚖️ Administrative vs. Teacher Comparison
+    """)
+    
+    # Admin comparison
+    if len(school_admins) > 0 and len(teachers) > 0:
+        admin_teacher_ratio = school_admin_avg / teacher_avg if teacher_avg > 0 else 0
+        st.markdown(f"""
+        - **School administrators earn {admin_teacher_ratio:.1f}x** the average teacher compensation
+        - **Average School Administrator:** ${school_admin_avg:,.0f}
+        - **Average Teacher:** ${teacher_avg:,.0f}
+        - **Difference:** ${school_admin_avg - teacher_avg:,.0f} more per administrator
+        """)
+    
+    if len(district_admins) > 0 and len(teachers) > 0 and not filter_aspen:
+        district_teacher_ratio = district_admin_avg / teacher_avg if teacher_avg > 0 else 0
+        st.markdown(f"""
+        - **District administrators earn {district_teacher_ratio:.1f}x** the average teacher compensation
+        - **Average District Administrator:** ${district_admin_avg:,.0f}
+        - **Gap from teachers:** ${district_admin_avg - teacher_avg:,.0f} more per district administrator
+        """)
+    
+    st.markdown(f"""
+    ### 🔍 What This Means for Teacher Compensation
+    
+    **The Data Suggests:**
+    - Teachers form the **backbone of educational delivery** but are compensated at **lower levels** than administrative roles
+    - There is significant **salary variation among teachers** (${teacher_salary_range:,.0f} range), suggesting pay scale complexities
+    - The district prioritizes **instructional spending** ({instruction_percentage:.1f}% of budget) but this includes all teaching staff, not just classroom teachers
+    
+    **Community Considerations:**
+    - Teacher retention and recruitment may be affected by compensation competitiveness
+    - Administrative overhead represents a significant budget allocation
+    - Pay equity within teaching roles varies considerably
+    
+    *This analysis reflects {selected_year} data, which is critical as the district undergoes reorganization.*
+    """)
 
 st.markdown("---")
 
@@ -488,14 +637,29 @@ st.subheader("Sample Job Titles by Functional Area")
 sample_titles = df.groupby('functional_area')['title'].unique().apply(lambda x: ', '.join(list(pd.Series(x).dropna().unique())[:5]))
 st.dataframe(sample_titles.reset_index().rename(columns={'title': 'Sample Titles'}))
 
-# Top earners table
+# Top earners table with privacy protection
 st.subheader("Top 20 Earners in District")
-top_earners = filtered_data.sort_values(by="net_amount", ascending=False).head(20)
-st.dataframe(format_currency_column(top_earners))
+top_earners = filtered_data.sort_values(by="net_amount", ascending=False).head(20).copy()
+# Create privacy-protected version for display
+top_earners_display = top_earners[['employee_initials', 'functional_area', 'is_fte', 'net_amount']].copy()
+top_earners_display = top_earners_display.rename(columns={'employee_initials': 'Employee'})
+st.dataframe(format_currency_column(top_earners_display))
 
-# Raw data download (CSV keeps raw numbers, not formatted strings)
+# Raw data download with privacy protection
 st.subheader("Download Cleaned Data")
-st.download_button("Download as CSV", filtered_data.to_csv(index=False), "cleaned_salary_data.csv", "text/csv")
+st.markdown("*Download includes privacy protection - employee names converted to initials*")
+
+# Create privacy-protected download version
+download_data = filtered_data[['employee_initials', 'functional_area', 'is_fte', 'net_amount']].copy()
+download_data = download_data.rename(columns={'employee_initials': 'employee'})
+
+st.download_button(
+    "Download as CSV", 
+    download_data.to_csv(index=False), 
+    f"alpine_district_salary_analysis_{selected_year}.csv", 
+    "text/csv",
+    help="CSV file with employee names converted to initials for privacy"
+)
 
 st.subheader("Crosscheck with Financial Report")
 st.markdown("""
