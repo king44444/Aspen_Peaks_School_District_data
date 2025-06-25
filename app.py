@@ -4,8 +4,113 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import seaborn as sns
 
-# Load data
-df = pd.read_csv("data/Alpine_School_District_2024.csv")
+# Helper function to convert names to initials for privacy
+def convert_to_initials(name):
+    """Convert 'Last, First' format to 'L, F' initials for privacy"""
+    if pd.isna(name) or not isinstance(name, str):
+        return "N/A"
+    
+    # Handle different name formats
+    name = name.strip().upper()
+    if ',' in name:
+        parts = name.split(',')
+        if len(parts) >= 2:
+            last_initial = parts[0].strip()[0] if parts[0].strip() else 'X'
+            first_initial = parts[1].strip()[0] if parts[1].strip() else 'X'
+            return f"{last_initial}, {first_initial}"
+    
+    # Fallback for unusual formats
+    words = name.split()
+    if len(words) >= 2:
+        return f"{words[-1][0]}, {words[0][0]}"
+    elif len(words) == 1:
+        return f"{words[0][0]}, X"
+    
+    return "N/A"
+
+# --- New: Salary/Benefits breakdown processing and formatting helpers ---
+def format_employment_status(is_fte):
+    return "Full-Time Employee" if is_fte else "Part-Time/Hourly"
+
+def create_employee_breakdown(df):
+    # Classify compensation type from description
+    def comp_type(desc):
+        desc = str(desc).upper()
+        if "REGULAR WAGES" in desc:
+            return "base_salary"
+        elif "EMPLOYEE BENEFITS" in desc:
+            return "benefits"
+        else:
+            return "other_compensation"
+    temp = df.copy()
+    temp['comp_type'] = temp['description'].apply(comp_type)
+    # Pivot/aggregate per employee
+    breakdown = temp.pivot_table(
+        index=['employee_name', 'functional_area', 'is_fte'],
+        columns='comp_type', values='net_amount', aggfunc='sum', fill_value=0
+    ).reset_index()
+    for col in ['base_salary', 'benefits', 'other_compensation']:
+        if col not in breakdown.columns:
+            breakdown[col] = 0.0
+    breakdown['total_compensation'] = breakdown['base_salary'] + breakdown['benefits'] + breakdown['other_compensation']
+    breakdown['employee_initials'] = breakdown['employee_name'].apply(convert_to_initials)
+    breakdown['employment_status'] = breakdown['is_fte'].apply(format_employment_status)
+    breakdown['benefits_percentage'] = (breakdown['benefits'] / breakdown['total_compensation']).replace([float('inf'), float('nan')], 0) * 100
+    # Reorder columns for clarity
+    breakdown = breakdown[['employee_name', 'employee_initials', 'functional_area', 'is_fte', 'employment_status',
+                           'base_salary', 'benefits', 'other_compensation', 'total_compensation', 'benefits_percentage']]
+    return breakdown
+# --- End new helper block ---
+
+# Multi-year data loading
+@st.cache_data
+def load_salary_data():
+    """Load and combine salary data from available years"""
+    data_files = {
+        2024: "data/Alpine_School_District_2024.csv",
+        2023: "data/Alpine School District_2023.csv", 
+        2022: "data/Alpine School District_2022.csv"
+    }
+    
+    combined_data = []
+    available_years = []
+    
+    for year, file_path in data_files.items():
+        try:
+            df_year = pd.read_csv(file_path)
+            df_year['fiscal_year'] = year
+            combined_data.append(df_year)
+            available_years.append(year)
+        except FileNotFoundError:
+            st.warning(f"Data file for {year} not found: {file_path}")
+            continue
+    
+    if combined_data:
+        combined_df = pd.concat(combined_data, ignore_index=True)
+        return combined_df, available_years
+    else:
+        st.error("No salary data files found!")
+        return pd.DataFrame(), []
+
+# Load all available data
+df_all, available_years = load_salary_data()
+
+# Year selector in sidebar
+st.sidebar.markdown("### Data Year Selection")
+if available_years:
+    selected_year = st.sidebar.selectbox(
+        "Select Year for Analysis", 
+        available_years, 
+        index=0 if 2024 in available_years else 0,
+        help="2024 is the most critical year due to pending district split"
+    )
+    df = df_all[df_all['fiscal_year'] == selected_year].copy()
+    
+    if selected_year == 2024:
+        st.sidebar.info("📊 **2024 Data Selected** - Most current year before district reorganization")
+else:
+    st.error("No data available!")
+    st.stop()
 
 # Aspen Peaks school list (based on city boundaries)
 aspen_peaks_schools = [
@@ -64,20 +169,17 @@ def is_fte(row):
 
 df['is_fte'] = df.apply(is_fte, axis=1)
 
-# Aggregate total salary per employee
-employee_totals = (
-    df.groupby(['employee_name', 'functional_area', 'is_fte'])['net_amount']
-    .sum()
-    .reset_index()
-)
+# --- New: Use create_employee_breakdown for aggregation ---
+employee_breakdown = create_employee_breakdown(df)
+# --- End aggregation block ---
 
 # Sidebar filters
 st.sidebar.header("Filters")
-selected_types = st.sidebar.multiselect("Filter by Employee Type", employee_totals['functional_area'].unique())
+selected_types = st.sidebar.multiselect("Filter by Employee Type", employee_breakdown['functional_area'].unique())
 
-filtered_data = employee_totals[
-    employee_totals['functional_area'].isin(selected_types)
-] if selected_types else employee_totals
+filtered_data = employee_breakdown[
+    employee_breakdown['functional_area'].isin(selected_types)
+] if selected_types else employee_breakdown
 
 # Format helper
 def format_currency_column(df, column='net_amount'):
@@ -183,304 +285,302 @@ with st.expander("📊 Data Source & Important Disclaimers", expanded=False):
 
 st.markdown("---")
 
+# Key Takeaways Section - Community Focus
+st.subheader("🎯 Key Takeaways for Community Members")
+st.markdown("*Critical insights from the salary data analysis*")
+
+with st.expander("📋 Executive Summary - What the Data Shows", expanded=True):
+    # Calculate key metrics for takeaways (dual-metric version)
+    teachers = filtered_data[filtered_data['functional_area'] == "Instruction"]
+    school_admins = filtered_data[filtered_data['functional_area'] == "School Administration"]
+    district_admins = filtered_data[filtered_data['functional_area'] == "District Administration"]
+
+    # Dual-metric calculations
+    def dual_stats(group):
+        if len(group) == 0:
+            return 0, 0, 0, 0, 0, 0
+        avg_salary = group['base_salary'].mean()
+        avg_benefits = group['benefits'].mean()
+        avg_total = group['total_compensation'].mean()
+        median_salary = group['base_salary'].median()
+        median_benefits = group['benefits'].median()
+        median_total = group['total_compensation'].median()
+        return avg_salary, avg_benefits, avg_total, median_salary, median_benefits, median_total
+
+    t_avg_sal, t_avg_ben, t_avg_tot, t_med_sal, t_med_ben, t_med_tot = dual_stats(teachers)
+    sa_avg_sal, sa_avg_ben, sa_avg_tot, sa_med_sal, sa_med_ben, sa_med_tot = dual_stats(school_admins)
+    da_avg_sal, da_avg_ben, da_avg_tot, da_med_sal, da_med_ben, da_med_tot = dual_stats(district_admins)
+
+    # Range for teachers
+    teacher_salary_range = teachers['base_salary'].max() - teachers['base_salary'].min() if len(teachers) > 0 else 0
+    teacher_benefit_range = teachers['benefits'].max() - teachers['benefits'].min() if len(teachers) > 0 else 0
+    teacher_total_range = teachers['total_compensation'].max() - teachers['total_compensation'].min() if len(teachers) > 0 else 0
+
+    # Budget: sum by base, benefits, total
+    total_budget_salary = filtered_data['base_salary'].sum()
+    total_budget_benefits = filtered_data['benefits'].sum()
+    total_budget_total = filtered_data['total_compensation'].sum()
+    instruction_salary = teachers['base_salary'].sum()
+    instruction_benefits = teachers['benefits'].sum()
+    instruction_total = teachers['total_compensation'].sum()
+    instruction_percentage_salary = (instruction_salary / total_budget_salary * 100) if total_budget_salary > 0 else 0
+    instruction_percentage_total = (instruction_total / total_budget_total * 100) if total_budget_total > 0 else 0
+
+    st.markdown(f"""
+    ### 🏫 Teacher Compensation Reality ({selected_year})
+
+    **💰 Average Teacher Compensation**
+    - **Base Salary:** ${t_avg_sal:,.0f}
+    - **Benefits:** ${t_avg_ben:,.0f}
+    - **Total Compensation:** ${t_avg_tot:,.0f}
+
+    **Median Teacher Compensation**
+    - **Base Salary:** ${t_med_sal:,.0f}
+    - **Benefits:** ${t_med_ben:,.0f}
+    - **Total:** ${t_med_tot:,.0f}
+
+    **Teacher Pay Range**
+    - **Base Salary:** ${teacher_salary_range:,.0f}
+    - **Benefits:** ${teacher_benefit_range:,.0f}
+    - **Total:** ${teacher_total_range:,.0f}
+
+    ### 📊 Budget Allocation Priorities
+    - **{instruction_percentage_salary:.1f}% of base salary** goes to classroom instruction
+    - **{instruction_percentage_total:.1f}% of total compensation** goes to classroom instruction
+    - **{len(teachers):,} teachers** serve the entire district
+    - Teachers represent the **largest employee group** but have **administrative oversight** at multiple levels
+    """)
+
+    st.markdown(f"""
+    ### ⚖️ Administrative vs. Teacher Comparison
+    - **Average School Admin (Base/Benefits/Total):** ${sa_avg_sal:,.0f} / ${sa_avg_ben:,.0f} / ${sa_avg_tot:,.0f}
+    - **Average Teacher (Base/Benefits/Total):** ${t_avg_sal:,.0f} / ${t_avg_ben:,.0f} / ${t_avg_tot:,.0f}
+    """)
+
+    if len(district_admins) > 0 and not filter_aspen:
+        st.markdown(f"""
+        - **Average District Admin (Base/Benefits/Total):** ${da_avg_sal:,.0f} / ${da_avg_ben:,.0f} / ${da_avg_tot:,.0f}
+        """)
+
+    st.markdown(f"""
+    **Community Considerations:**
+    - Both base salary and benefits are important in evaluating competitiveness
+    - Administrative overhead and benefits represent a significant part of the total budget
+    - Pay equity varies by both salary and benefits components
+
+    *This analysis reflects {selected_year} data, which is critical as the district undergoes reorganization.*
+    """)
+
+st.markdown("---")
+
 # Main metrics
 st.metric("Total Unique Employees", filtered_data['employee_name'].nunique())
-st.metric("Total Salary (All Time)", f"${int(round(filtered_data['net_amount'].sum())):,}")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Total Base Salary", f"${int(round(filtered_data['base_salary'].sum())):,}")
+with col2:
+    st.metric("Total Benefits", f"${int(round(filtered_data['benefits'].sum())):,}")
+with col3:
+    st.metric("Total Compensation", f"${int(round(filtered_data['total_compensation'].sum())):,}")
 
-# Bar Chart - Total Salary per Employee Type
-st.subheader("Total Salary by Employee Type")
-st.bar_chart(
-    filtered_data.groupby("functional_area")["net_amount"].sum()
-)
+# Bar Chart - Total Compensation by Employee Type (Stacked)
+st.subheader("Total Compensation by Employee Type")
+bar_df = filtered_data.groupby("functional_area")[["base_salary", "benefits"]].sum()
+bar_df[['base_salary', 'benefits']].plot(kind="bar", stacked=True, figsize=(10,5))
+plt.ylabel("Compensation ($)")
+plt.title("Base Salary + Benefits by Functional Area")
+plt.tight_layout()
+st.pyplot(plt.gcf())
+plt.clf()
 
-# Average Salary per Employee Type
-st.subheader("Average Salary per Employee Type")
-avg_salary = filtered_data.groupby("functional_area")["net_amount"].mean().sort_values(ascending=False)
-st.dataframe(avg_salary.apply(lambda x: f"${int(round(x)):,}"))
+# Average Compensation by Employee Type (all three metrics)
+st.subheader("Average Compensation by Employee Type")
+avg_comp = filtered_data.groupby("functional_area")[["base_salary", "benefits", "total_compensation"]].mean().sort_values(by="total_compensation", ascending=False)
+for col in ['base_salary', 'benefits', 'total_compensation']:
+    avg_comp[col] = avg_comp[col].apply(lambda x: f"${int(round(x)):,}")
+avg_comp = avg_comp.rename(columns={"base_salary": "Avg Base Salary", "benefits": "Avg Benefits", "total_compensation": "Avg Total Compensation"})
+st.dataframe(avg_comp)
 
-# Pie chart - Proportion of Budget per Role Type
-st.subheader("Salary Distribution by Employee Type")
-fig = plt.figure(figsize=(6,6))
-plt.pie(list(avg_salary.values), labels=list(avg_salary.index), autopct="%1.1f%%", startangle=90)
-plt.title("Budget Share by Role")
-plt.axis('equal')
-st.pyplot(fig)
+# Pie chart - District-wide Salary vs Benefits Breakdown
+st.subheader("District-wide Salary vs Benefits Breakdown")
+# pie_vals = [filtered_data['base_salary'].sum(), filtered_data['benefits'].sum()]
+# pie_labels = ["Base Salary", "Benefits"]
+# fig, ax = plt.subplots()
+# ax.pie(pie_vals, labels=pie_labels, autopct="%1.1f%%", startangle=90)
+# ax.set_title("District-wide Compensation Split")
+# st.pyplot(fig)
 
-# === Teachers vs School Administrators Comparison ===
+# === Teachers vs School Administrators Comparison (all three metrics) ===
 st.subheader("Teachers vs School Administrators")
 st.markdown("*Comparing teachers with principals and school-level administrators*")
 
 teachers = filtered_data[filtered_data['functional_area'] == "Instruction"]
 school_admins = filtered_data[filtered_data['functional_area'] == "School Administration"]
+t = teachers
+sa = school_admins
 
-employee_counts_school = [len(teachers), len(school_admins)]
-salary_sums_school = [teachers['net_amount'].sum(), school_admins['net_amount'].sum()]
-avg_salaries_school = [teachers['net_amount'].mean(), school_admins['net_amount'].mean()]
-labels_school = ['Teachers', 'School Admins']
-colors = ['#4e79a7', '#f28e2c']
-
-# Row 1: Employee Count
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
+col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Teachers", f"{employee_counts_school[0]} employees")
+    st.metric("Teachers: Base", f"${int(round(t['base_salary'].sum())):,}")
+    st.metric("Teachers: Benefits", f"${int(round(t['benefits'].sum())):,}")
+    st.metric("Teachers: Total", f"${int(round(t['total_compensation'].sum())):,}")
 with col2:
-    st.pyplot(small_pie_chart(employee_counts_school, labels_school, colors))
-with col3:
-    st.metric("School Administrators", f"{employee_counts_school[1]} employees")
+    st.metric("School Admins: Base", f"${int(round(sa['base_salary'].sum())):,}")
+    st.metric("School Admins: Benefits", f"${int(round(sa['benefits'].sum())):,}")
+    st.metric("School Admins: Total", f"${int(round(sa['total_compensation'].sum())):,}")
 
-# Row 2: Total Salary
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
-with col1:
-    st.metric("Total Teacher Salary", f"${int(round(salary_sums_school[0])):,}")
-with col2:
-    st.pyplot(small_pie_chart(salary_sums_school, labels_school, colors))
-with col3:
-    st.metric("Total School Admin Salary", f"${int(round(salary_sums_school[1])):,}")
-
-# Row 3: Average Salary
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
-with col1:
-    st.metric("Avg Teacher Salary", f"${int(round(avg_salaries_school[0])):,}")
-with col2:
-    st.pyplot(small_pie_chart(avg_salaries_school, labels_school, colors))
-with col3:
-    st.metric("Avg School Admin Salary", f"${int(round(avg_salaries_school[1])):,}")
-
-# === Teachers vs District Administrators Comparison ===
+# === Teachers vs District Administrators Comparison (all three metrics) ===
 st.subheader("Teachers vs District Administrators")
 st.markdown("*Comparing teachers with superintendents, directors, and district-level staff*")
 
 district_admins = filtered_data[filtered_data['functional_area'] == "District Administration"]
+td = teachers
+da = district_admins
 
-employee_counts_district = [len(teachers), len(district_admins)]
-salary_sums_district = [teachers['net_amount'].sum(), district_admins['net_amount'].sum()]
-avg_salaries_district = [teachers['net_amount'].mean(), district_admins['net_amount'].mean()]
-labels_district = ['Teachers', 'District Admins']
-colors_district = ['#4e79a7', '#e15759']
-
-# Row 1: Employee Count
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
+col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Teachers", f"{employee_counts_district[0]} employees")
+    st.metric("Teachers: Base", f"${int(round(td['base_salary'].sum())):,}")
+    st.metric("Teachers: Benefits", f"${int(round(td['benefits'].sum())):,}")
+    st.metric("Teachers: Total", f"${int(round(td['total_compensation'].sum())):,}")
 with col2:
-    st.pyplot(small_pie_chart(employee_counts_district, labels_district, colors_district))
-with col3:
-    st.metric("District Administrators", f"{employee_counts_district[1]} employees")
+    st.metric("District Admins: Base", f"${int(round(da['base_salary'].sum())):,}" if len(da) > 0 else "N/A")
+    st.metric("District Admins: Benefits", f"${int(round(da['benefits'].sum())):,}" if len(da) > 0 else "N/A")
+    st.metric("District Admins: Total", f"${int(round(da['total_compensation'].sum())):,}" if len(da) > 0 else "N/A")
 
-# Row 2: Total Salary
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
-with col1:
-    st.metric("Total Teacher Salary", f"${int(round(salary_sums_district[0])):,}")
-with col2:
-    st.pyplot(small_pie_chart(salary_sums_district, labels_district, colors_district))
-with col3:
-    st.metric("Total District Admin Salary", f"${int(round(salary_sums_district[1])):,}")
-
-# Row 3: Average Salary
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
-with col1:
-    st.metric("Avg Teacher Salary", f"${int(round(avg_salaries_district[0])):,}")
-with col2:
-    st.pyplot(small_pie_chart(avg_salaries_district, labels_district, colors_district))
-with col3:
-    if pd.isna(avg_salaries_district[1]):
-        st.metric("Avg District Admin Salary", "N/A (excluded from Aspen Peaks view)")
-    else:
-        st.metric("Avg District Admin Salary", f"${int(round(avg_salaries_district[1])):,}")
-
-# Summary comparison table
+# Summary comparison table (all three metrics)
 st.markdown("#### Summary: Teacher vs Administrator Compensation")
 
-# Calculate district admin values with null safety
-district_avg_salary = "N/A (excluded)" if len(district_admins) == 0 or pd.isna(district_admins['net_amount'].mean()) else f"${int(round(district_admins['net_amount'].mean())):,}"
-district_total_budget = "N/A (excluded)" if len(district_admins) == 0 else f"${int(round(district_admins['net_amount'].sum())):,}"
+def safe_fmt(val):
+    if pd.isna(val):
+        return "N/A"
+    return f"${int(round(val)):,}"
 
 comparison_data = {
     'Role': ['Teachers', 'School Administrators', 'District Administrators'],
     'Employee Count': [len(teachers), len(school_admins), len(district_admins)],
-    'Average Salary': [f"${int(round(teachers['net_amount'].mean())):,}", 
-                      f"${int(round(school_admins['net_amount'].mean())):,}", 
-                      district_avg_salary],
-    'Total Budget': [f"${int(round(teachers['net_amount'].sum())):,}", 
-                    f"${int(round(school_admins['net_amount'].sum())):,}", 
-                    district_total_budget]
+    'Avg Base Salary': [safe_fmt(teachers['base_salary'].mean()), safe_fmt(school_admins['base_salary'].mean()), safe_fmt(district_admins['base_salary'].mean()) if len(district_admins) > 0 else "N/A"],
+    'Avg Benefits': [safe_fmt(teachers['benefits'].mean()), safe_fmt(school_admins['benefits'].mean()), safe_fmt(district_admins['benefits'].mean()) if len(district_admins) > 0 else "N/A"],
+    'Avg Total Compensation': [safe_fmt(teachers['total_compensation'].mean()), safe_fmt(school_admins['total_compensation'].mean()), safe_fmt(district_admins['total_compensation'].mean()) if len(district_admins) > 0 else "N/A"],
+    'Total Base Salary': [safe_fmt(teachers['base_salary'].sum()), safe_fmt(school_admins['base_salary'].sum()), safe_fmt(district_admins['base_salary'].sum()) if len(district_admins) > 0 else "N/A"],
+    'Total Benefits': [safe_fmt(teachers['benefits'].sum()), safe_fmt(school_admins['benefits'].sum()), safe_fmt(district_admins['benefits'].sum()) if len(district_admins) > 0 else "N/A"],
+    'Total Compensation': [safe_fmt(teachers['total_compensation'].sum()), safe_fmt(school_admins['total_compensation'].sum()), safe_fmt(district_admins['total_compensation'].sum()) if len(district_admins) > 0 else "N/A"]
 }
 comparison_df = pd.DataFrame(comparison_data)
 st.dataframe(comparison_df, use_container_width=True)
 
-# FTE vs Non-FTE Summary
+# FTE vs Non-FTE Summary (all three metrics)
 st.subheader("FTE vs Non-FTE Comparison")
 fte_data = filtered_data[filtered_data['is_fte']]
 non_fte_data = filtered_data[~filtered_data['is_fte']]
 col1, col2 = st.columns(2)
 with col1:
     st.metric("FTE Count", fte_data['employee_name'].nunique())
-    st.metric("FTE Total Salary", f"${int(round(fte_data['net_amount'].sum())):,}")
+    st.metric("FTE Base Salary", f"${int(round(fte_data['base_salary'].sum())):,}")
+    st.metric("FTE Benefits", f"${int(round(fte_data['benefits'].sum())):,}")
+    st.metric("FTE Total Compensation", f"${int(round(fte_data['total_compensation'].sum())):,}")
 with col2:
     st.metric("Non-FTE Count", non_fte_data['employee_name'].nunique())
-    st.metric("Non-FTE Total Salary", f"${int(round(non_fte_data['net_amount'].sum())):,}")
+    st.metric("Non-FTE Base Salary", f"${int(round(non_fte_data['base_salary'].sum())):,}")
+    st.metric("Non-FTE Benefits", f"${int(round(non_fte_data['benefits'].sum())):,}")
+    st.metric("Non-FTE Total Compensation", f"${int(round(non_fte_data['total_compensation'].sum())):,}")
 
-# === Salary Distribution Analysis ===
-st.subheader("Salary Distribution by Role")
-st.markdown("This section shows how salaries are distributed within each functional area, helping identify salary ranges and equity within roles.")
+# === Salary Distribution Analysis (all three metrics) ===
+st.subheader("Compensation Distribution by Role")
+st.markdown("This section shows how base salary, benefits, and total compensation are distributed within each functional area, helping identify compensation ranges and equity within roles.")
 
-# Calculate salary statistics by functional area
-salary_stats = filtered_data.groupby('functional_area')['net_amount'].agg([
-    'count', 'min', 'max', 'mean', 'median', 
-    lambda x: x.quantile(0.25),  # Q1
-    lambda x: x.quantile(0.75),  # Q3
-    'std'
-]).round(0)
+# Calculate stats by functional area for all three metrics
+def comp_stats(df, col):
+    return df.groupby('functional_area')[col].agg([
+        'count', 'min', 'max', 'mean', 'median',
+        lambda x: x.quantile(0.25),  # Q1
+        lambda x: x.quantile(0.75),  # Q3
+        'std'
+    ]).round(0)
 
-salary_stats.columns = ['Employee Count', 'Min Salary', 'Max Salary', 'Mean Salary', 'Median Salary', 'Q1 (25%)', 'Q3 (75%)', 'Std Dev']
+salary_stats = comp_stats(filtered_data, 'base_salary')
+salary_stats.columns = ['Employee Count', 'Min Base', 'Max Base', 'Mean Base', 'Median Base', 'Q1 Base', 'Q3 Base', 'Std Base']
+benefit_stats = comp_stats(filtered_data, 'benefits')
+benefit_stats.columns = ['_b_count', 'Min Ben', 'Max Ben', 'Mean Ben', 'Median Ben', 'Q1 Ben', 'Q3 Ben', 'Std Ben']
+total_stats = comp_stats(filtered_data, 'total_compensation')
+total_stats.columns = ['_t_count', 'Min Total', 'Max Total', 'Mean Total', 'Median Total', 'Q1 Total', 'Q3 Total', 'Std Total']
 
-# Add salary range calculation
-salary_stats['Salary Range'] = salary_stats['Max Salary'] - salary_stats['Min Salary']
+stats = pd.concat([salary_stats, benefit_stats.iloc[:,1:], total_stats.iloc[:,1:]], axis=1)
+stats['Base Range'] = stats['Max Base'] - stats['Min Base']
+stats['Benefit Range'] = stats['Max Ben'] - stats['Min Ben']
+stats['Total Range'] = stats['Max Total'] - stats['Min Total']
+stats = stats.sort_values('Mean Total', ascending=False)
 
-# Sort by mean salary for better readability
-salary_stats = salary_stats.sort_values('Mean Salary', ascending=False)
-
-# Display formatted statistics table
-st.markdown("#### Salary Statistics by Functional Area")
-formatted_stats = salary_stats.copy()
-currency_cols = ['Min Salary', 'Max Salary', 'Mean Salary', 'Median Salary', 'Q1 (25%)', 'Q3 (75%)', 'Salary Range', 'Std Dev']
+st.markdown("#### Compensation Statistics by Functional Area")
+formatted_stats = stats.copy()
+currency_cols = ['Min Base', 'Max Base', 'Mean Base', 'Median Base', 'Q1 Base', 'Q3 Base', 'Std Base',
+                 'Min Ben', 'Max Ben', 'Mean Ben', 'Median Ben', 'Q1 Ben', 'Q3 Ben', 'Std Ben',
+                 'Min Total', 'Max Total', 'Mean Total', 'Median Total', 'Q1 Total', 'Q3 Total', 'Std Total',
+                 'Base Range', 'Benefit Range', 'Total Range']
 for col in currency_cols:
     formatted_stats[col] = formatted_stats[col].apply(lambda x: f"${int(x):,}")
-
 st.dataframe(formatted_stats, use_container_width=True)
 
-# Box Plot - Salary Distribution by Role
-st.markdown("#### Salary Distribution Box Plot")
-st.markdown("Box plots show the salary spread within each role. The box shows the middle 50% of salaries, with the line inside showing the median.")
+# Box Plot - Distribution by Role for all three metrics
+st.markdown("#### Compensation Distribution Box Plot")
+st.markdown("Box plots show the spread of base salary, benefits, and total compensation within each role. The box shows the middle 50% of values, with the line inside showing the median.")
 
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-fig, ax = plt.subplots(figsize=(12, 8))
-
-# Prepare data for box plot
-plot_data = []
-plot_labels = []
-for area in salary_stats.index:
-    role_data = filtered_data[filtered_data['functional_area'] == area]['net_amount']
-    if len(role_data) > 0:
-        plot_data.append(role_data)
-        plot_labels.append(f"{area}\n(n={len(role_data)})")
-
-# Create box plot
-box_plot = ax.boxplot(plot_data, patch_artist=True, 
-                      boxprops=dict(facecolor='lightblue', alpha=0.7),
-                      medianprops=dict(color='red', linewidth=2))
-ax.set_xticklabels(plot_labels)
-
-ax.set_title('Salary Distribution by Functional Area', fontsize=14, fontweight='bold')
-ax.set_ylabel('Salary ($)', fontsize=12)
-ax.set_xlabel('Functional Area', fontsize=12)
-
-# Format y-axis as currency
-ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-
-# Rotate x-axis labels for better readability
-plt.xticks(rotation=45, ha='right')
+fig, axs = plt.subplots(1, 3, figsize=(18, 8))
+for idx, (col, label, ax) in enumerate(zip(['base_salary', 'benefits', 'total_compensation'],
+                                           ['Base Salary', 'Benefits', 'Total Compensation'], axs)):
+    plot_data = []
+    plot_labels = []
+    for area in stats.index:
+        role_data = filtered_data[filtered_data['functional_area'] == area][col]
+        if len(role_data) > 0:
+            plot_data.append(role_data)
+            plot_labels.append(f"{area}\n(n={len(role_data)})")
+    if len(plot_data) > 0:
+        ax.boxplot(plot_data, patch_artist=True,
+                   boxprops=dict(facecolor='lightblue', alpha=0.7),
+                   medianprops=dict(color='red', linewidth=2))
+        ax.set_xticklabels(plot_labels, rotation=45, ha='right')
+        ax.set_title(f'{label} Distribution')
+        ax.set_ylabel(f"{label} ($)")
+        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
 plt.tight_layout()
-
 st.pyplot(fig)
 
-# Salary Range Comparison
-st.markdown("#### Salary Range Analysis")
-col1, col2 = st.columns(2)
-
+# Range Comparison Bar Charts
+st.markdown("#### Compensation Range Analysis")
+col1, col2, col3 = st.columns(3)
 with col1:
-    # Bar chart showing salary ranges
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    y_pos = range(len(salary_stats))
-    bars = ax.barh(y_pos, salary_stats['Salary Range'], color='skyblue', alpha=0.7)
-    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    y_pos = range(len(stats))
+    bars = ax.barh(y_pos, stats['Base Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))), color='skyblue', alpha=0.7)
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(salary_stats.index)
-    ax.set_xlabel('Salary Range ($)')
-    ax.set_title('Salary Range by Functional Area')
-    
-    # Format x-axis as currency
+    ax.set_yticklabels(stats.index)
+    ax.set_xlabel('Base Salary Range ($)')
+    ax.set_title('Base Salary Range by Functional Area')
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    
-    # Add value labels on bars
-    for i, bar in enumerate(bars):
-        width = bar.get_width()
-        ax.text(width + width*0.01, bar.get_y() + bar.get_height()/2, 
-                f'${width:,.0f}', ha='left', va='center', fontsize=9)
-    
     plt.tight_layout()
     st.pyplot(fig)
-
 with col2:
-    # Employee count vs Average salary scatter
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    scatter = ax.scatter(salary_stats['Employee Count'], salary_stats['Mean Salary'], 
-                        s=100, alpha=0.7, c='coral')
-    
-    # Add labels for each point
-    for i, area in enumerate(salary_stats.index):
-        try:
-            x_val = int(pd.to_numeric(salary_stats.loc[area, 'Employee Count']))
-            y_val = float(pd.to_numeric(salary_stats.loc[area, 'Mean Salary']))
-            ax.annotate(area, (x_val, y_val), xytext=(5, 5), textcoords='offset points', fontsize=9)
-        except (ValueError, TypeError):
-            # Skip annotation if conversion fails
-            continue
-    
-    ax.set_xlabel('Number of Employees')
-    ax.set_ylabel('Average Salary ($)')
-    ax.set_title('Employee Count vs Average Salary by Role')
-    
-    # Format y-axis as currency
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    y_pos = range(len(stats))
+    bars = ax.barh(y_pos, stats['Benefit Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))), color='orange', alpha=0.7)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(stats.index)
+    ax.set_xlabel('Benefit Range ($)')
+    ax.set_title('Benefit Range by Functional Area')
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     plt.tight_layout()
     st.pyplot(fig)
-
-# Salary Distribution Histogram
-st.markdown("#### Salary Distribution Histogram by Role")
-st.markdown("This histogram shows the frequency of different salary levels within each functional area.")
-
-# Create subplot for each functional area with significant employee count
-areas_to_plot = salary_stats[salary_stats['Employee Count'] >= 3].index[:6]  # Top 6 areas with at least 3 employees
-
-if len(areas_to_plot) > 0:
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes = axes.flatten()
-    
-    colors = ['skyblue', 'lightcoral', 'lightgreen', 'plum', 'khaki', 'lightgray']
-    
-    for i, area in enumerate(areas_to_plot):
-        if i < len(axes):
-            role_salaries = filtered_data[filtered_data['functional_area'] == area]['net_amount']
-            
-            axes[i].hist(role_salaries, bins=min(10, len(role_salaries)//2 + 1), 
-                        color=colors[i], alpha=0.7, edgecolor='black')
-            axes[i].set_title(f'{area}\n({len(role_salaries)} employees)', fontsize=10)
-            axes[i].set_xlabel('Salary ($)')
-            axes[i].set_ylabel('Count')
-            
-            # Format x-axis as currency
-            axes[i].xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x/1000:.0f}K'))
-            
-            # Add mean line
-            mean_sal = role_salaries.mean()
-            axes[i].axvline(mean_sal, color='red', linestyle='--', linewidth=2, 
-                           label=f'Mean: ${mean_sal:,.0f}')
-            axes[i].legend(fontsize=8)
-    
-    # Hide empty subplots
-    for i in range(len(areas_to_plot), len(axes)):
-        axes[i].set_visible(False)
-    
+with col3:
+    fig, ax = plt.subplots(figsize=(8, 6))
+    y_pos = range(len(stats))
+    bars = ax.barh(y_pos, stats['Total Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))), color='green', alpha=0.7)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(stats.index)
+    ax.set_xlabel('Total Compensation Range ($)')
+    ax.set_title('Total Compensation Range by Functional Area')
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     plt.tight_layout()
     st.pyplot(fig)
-else:
-    st.info("Not enough data for histogram visualization. Need at least 3 employees per role.")
 
 
 # Sample job titles for each role
@@ -488,21 +588,76 @@ st.subheader("Sample Job Titles by Functional Area")
 sample_titles = df.groupby('functional_area')['title'].unique().apply(lambda x: ', '.join(list(pd.Series(x).dropna().unique())[:5]))
 st.dataframe(sample_titles.reset_index().rename(columns={'title': 'Sample Titles'}))
 
-# Top earners table
-st.subheader("Top 20 Earners in District")
-top_earners = filtered_data.sort_values(by="net_amount", ascending=False).head(20)
-st.dataframe(format_currency_column(top_earners))
+# --- Enhanced Top Earners Section (dual-metric display) ---
+st.subheader("Top Earners in District")
 
-# Raw data download (CSV keeps raw numbers, not formatted strings)
+# --- Enhanced Top Earners Controls ---
+sort_by = st.selectbox(
+    "Sort by",
+    ["Total Compensation", "Base Salary", "Benefits"],
+    index=0,
+    help="Select which column to rank top earners by"
+)
+sort_order = st.selectbox(
+    "Order", ["Highest to Lowest", "Lowest to Highest"], index=0
+)
+top_n = st.selectbox(
+    "Show Top", [10, 20, 50, 100], index=1
+)
+sort_col_map = {
+    "Total Compensation": "total_compensation",
+    "Base Salary": "base_salary",
+    "Benefits": "benefits"
+}
+sort_col = sort_col_map[sort_by]
+ascending = (sort_order == "Lowest to Highest")
+
+top_earners = employee_breakdown.sort_values(by=sort_col, ascending=ascending).head(top_n).copy()
+
+top_earners_display = top_earners[[
+    'employee_initials', 'functional_area', 'employment_status',
+    'base_salary', 'benefits', 'total_compensation', 'benefits_percentage'
+]].rename(columns={
+    'employee_initials': 'Employee',
+    'functional_area': 'Role',
+    'employment_status': 'Employment Status',
+    'base_salary': 'Base Salary',
+    'benefits': 'Benefits',
+    'total_compensation': 'Total Compensation',
+    'benefits_percentage': 'Benefits %'
+})
+
+for col in ['Base Salary', 'Benefits', 'Total Compensation']:
+    top_earners_display[col] = top_earners_display[col].apply(lambda x: f"${int(round(x)):,}")
+top_earners_display['Benefits %'] = top_earners_display['Benefits %'].apply(lambda x: f"{x:.1f}%")
+
+st.dataframe(top_earners_display, use_container_width=True)
+# --- End Top Earners Section ---
+
+# Raw data download with privacy protection (all three metrics)
 st.subheader("Download Cleaned Data")
-st.download_button("Download as CSV", filtered_data.to_csv(index=False), "cleaned_salary_data.csv", "text/csv")
+st.markdown("*Download includes privacy protection - employee names converted to initials*")
+
+# Create privacy-protected download version
+download_data = filtered_data[['employee_initials', 'functional_area', 'is_fte', 'base_salary', 'benefits', 'total_compensation']].copy()
+download_data = download_data.rename(columns={'employee_initials': 'employee'})
+
+st.download_button(
+    "Download as CSV",
+    download_data.to_csv(index=False),
+    f"alpine_district_salary_analysis_{selected_year}.csv",
+    "text/csv",
+    help="CSV file with employee names converted to initials for privacy"
+)
 
 st.subheader("Crosscheck with Financial Report")
 st.markdown("""
 - **Report FTE**: 8,231  
 - **Your dataset names**: 14,897 (includes duplicates, subs, part-time)  
 - **Report: 61.9% to Instruction**  
-- **App: {}% to Teachers**  
+- **App: {:.1f}% to Teachers (Total Compensation)**  
+- **App: {:.1f}% to Teachers (Base Salary)**  
 """.format(
-    round((teachers['net_amount'].sum() / filtered_data['net_amount'].sum()) * 100)
+    (teachers['total_compensation'].sum() / filtered_data['total_compensation'].sum()) * 100 if filtered_data['total_compensation'].sum() > 0 else 0,
+    (teachers['base_salary'].sum() / filtered_data['base_salary'].sum()) * 100 if filtered_data['base_salary'].sum() > 0 else 0
 ))
