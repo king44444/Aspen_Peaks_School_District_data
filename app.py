@@ -62,38 +62,56 @@ def create_employee_breakdown(df):
     return breakdown
 # --- End new helper block ---
 
-# Multi-year data loading
+# Optimized data loading - load only available years list first
 @st.cache_data
-def load_salary_data():
-    """Load and combine salary data from available years"""
+def get_available_years():
+    """Get list of available data years without loading data"""
     data_files = {
         2024: "data/Alpine_School_District_2024.csv",
         2023: "data/Alpine School District_2023.csv", 
         2022: "data/Alpine School District_2022.csv"
     }
     
-    combined_data = []
     available_years = []
-    
     for year, file_path in data_files.items():
         try:
-            df_year = pd.read_csv(file_path)
-            df_year['fiscal_year'] = year
-            combined_data.append(df_year)
-            available_years.append(year)
-        except FileNotFoundError:
-            st.warning(f"Data file for {year} not found: {file_path}")
+            # Just check if file exists without loading
+            import os
+            if os.path.exists(file_path):
+                available_years.append(year)
+        except:
             continue
     
-    if combined_data:
-        combined_df = pd.concat(combined_data, ignore_index=True)
-        return combined_df, available_years
-    else:
-        st.error("No salary data files found!")
-        return pd.DataFrame(), []
+    return available_years
 
-# Load all available data
-df_all, available_years = load_salary_data()
+@st.cache_data
+def load_single_year_data(year):
+    """Load data for a single year only"""
+    data_files = {
+        2024: "data/Alpine_School_District_2024.csv",
+        2023: "data/Alpine School District_2023.csv", 
+        2022: "data/Alpine School District_2022.csv"
+    }
+    
+    if year not in data_files:
+        st.error(f"Data for year {year} not available!")
+        return pd.DataFrame()
+    
+    try:
+        # Load only essential columns to reduce memory
+        df = pd.read_csv(data_files[year], 
+                        usecols=['employee_name', 'title', 'org2', 'description', 'net_amount'])
+        df['fiscal_year'] = year
+        return df
+    except FileNotFoundError:
+        st.error(f"Data file for {year} not found: {data_files[year]}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error loading data for {year}: {str(e)}")
+        return pd.DataFrame()
+
+# Get available years without loading all data
+available_years = get_available_years()
 
 # Year selector in sidebar
 st.sidebar.markdown("### Data Year Selection")
@@ -104,7 +122,13 @@ if available_years:
         index=0 if 2024 in available_years else 0,
         help="2024 is the most critical year due to pending district split"
     )
-    df = df_all[df_all['fiscal_year'] == selected_year].copy()
+    
+    # Load data for selected year only
+    df = load_single_year_data(selected_year)
+    
+    if df.empty:
+        st.error(f"Failed to load data for {selected_year}")
+        st.stop()
     
     if selected_year == 2024:
         st.sidebar.info("📊 **2024 Data Selected** - Most current year before district reorganization")
@@ -386,12 +410,18 @@ with col3:
 # Bar Chart - Total Compensation by Employee Type (Stacked)
 st.subheader("Total Compensation by Employee Type")
 bar_df = filtered_data.groupby("functional_area")[["base_salary", "benefits"]].sum()
-bar_df[['base_salary', 'benefits']].plot(kind="bar", stacked=True, figsize=(10,5))
-plt.ylabel("Compensation ($)")
-plt.title("Base Salary + Benefits by Functional Area")
+
+# Create a more memory-efficient plot
+fig, ax = plt.subplots(figsize=(10, 5))
+bar_df[['base_salary', 'benefits']].plot(kind="bar", stacked=True, ax=ax)
+ax.set_ylabel("Compensation ($)")
+ax.set_title("Base Salary + Benefits by Functional Area")
 plt.tight_layout()
-st.pyplot(plt.gcf())
-plt.clf()
+st.pyplot(fig)
+
+# Explicit memory cleanup
+plt.close(fig)
+del bar_df, fig, ax
 
 # Average Compensation by Employee Type (all three metrics)
 st.subheader("Average Compensation by Employee Type")
@@ -401,14 +431,23 @@ for col in ['base_salary', 'benefits', 'total_compensation']:
 avg_comp = avg_comp.rename(columns={"base_salary": "Avg Base Salary", "benefits": "Avg Benefits", "total_compensation": "Avg Total Compensation"})
 st.dataframe(avg_comp)
 
-# Pie chart - District-wide Salary vs Benefits Breakdown
+# District-wide Salary vs Benefits Breakdown
 st.subheader("District-wide Salary vs Benefits Breakdown")
-# pie_vals = [filtered_data['base_salary'].sum(), filtered_data['benefits'].sum()]
-# pie_labels = ["Base Salary", "Benefits"]
-# fig, ax = plt.subplots()
-# ax.pie(pie_vals, labels=pie_labels, autopct="%1.1f%%", startangle=90)
-# ax.set_title("District-wide Compensation Split")
-# st.pyplot(fig)
+total_base = filtered_data['base_salary'].sum()
+total_benefits = filtered_data['benefits'].sum()
+total_comp = total_base + total_benefits
+
+base_percentage = (total_base / total_comp) * 100 if total_comp > 0 else 0
+benefits_percentage = (total_benefits / total_comp) * 100 if total_comp > 0 else 0
+
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Base Salary", f"${total_base:,.0f}", f"{base_percentage:.1f}% of total")
+with col2:
+    st.metric("Benefits", f"${total_benefits:,.0f}", f"{benefits_percentage:.1f}% of total")
+
+# Memory cleanup
+del total_base, total_benefits, total_comp, base_percentage, benefits_percentage
 
 # === Teachers vs School Administrators Comparison (all three metrics) ===
 st.subheader("Teachers vs School Administrators")
@@ -520,17 +559,26 @@ for col in currency_cols:
     formatted_stats[col] = formatted_stats[col].apply(lambda x: f"${int(x):,}")
 st.dataframe(formatted_stats, use_container_width=True)
 
-# Box Plot - Distribution by Role for all three metrics
+# Box Plot - Distribution by Role for all three metrics (with sampling for memory efficiency)
 st.markdown("#### Compensation Distribution Box Plot")
 st.markdown("Box plots show the spread of base salary, benefits, and total compensation within each role. The box shows the middle 50% of values, with the line inside showing the median.")
 
-fig, axs = plt.subplots(1, 3, figsize=(18, 8))
+# Sample data for plotting if dataset is large
+max_samples_per_group = 1000
+sampled_data = filtered_data.copy()
+if len(filtered_data) > 5000:
+    sampled_data = filtered_data.groupby('functional_area').apply(
+        lambda x: x.sample(min(len(x), max_samples_per_group), random_state=42)
+    ).reset_index(drop=True)
+    st.info(f"📊 Large dataset detected. Sampling {max_samples_per_group} employees per role for visualization.")
+
+fig, axs = plt.subplots(1, 3, figsize=(15, 6))  # Reduced figure size
 for idx, (col, label, ax) in enumerate(zip(['base_salary', 'benefits', 'total_compensation'],
                                            ['Base Salary', 'Benefits', 'Total Compensation'], axs)):
     plot_data = []
     plot_labels = []
     for area in stats.index:
-        role_data = filtered_data[filtered_data['functional_area'] == area][col]
+        role_data = sampled_data[sampled_data['functional_area'] == area][col]
         if len(role_data) > 0:
             plot_data.append(role_data)
             plot_labels.append(f"{area}\n(n={len(role_data)})")
@@ -538,49 +586,67 @@ for idx, (col, label, ax) in enumerate(zip(['base_salary', 'benefits', 'total_co
         ax.boxplot(plot_data, patch_artist=True,
                    boxprops=dict(facecolor='lightblue', alpha=0.7),
                    medianprops=dict(color='red', linewidth=2))
-        ax.set_xticklabels(plot_labels, rotation=45, ha='right')
-        ax.set_title(f'{label} Distribution')
-        ax.set_ylabel(f"{label} ($)")
+        ax.set_xticklabels(plot_labels, rotation=45, ha='right', fontsize=8)
+        ax.set_title(f'{label} Distribution', fontsize=10)
+        ax.set_ylabel(f"{label} ($)", fontsize=9)
         ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
 plt.tight_layout()
 st.pyplot(fig)
 
-# Range Comparison Bar Charts
+# Memory cleanup
+plt.close(fig)
+del sampled_data, plot_data, plot_labels, fig, axs
+
+# Range Comparison Bar Charts (optimized for memory)
 st.markdown("#### Compensation Range Analysis")
 col1, col2, col3 = st.columns(3)
+
+# Create range data once to avoid repeated processing
+range_data = {
+    'base': stats['Base Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))),
+    'benefit': stats['Benefit Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))),
+    'total': stats['Total Range'].apply(lambda x: float(str(x).replace("$","").replace(",","")))
+}
+y_pos = range(len(stats))
+
 with col1:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    y_pos = range(len(stats))
-    bars = ax.barh(y_pos, stats['Base Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))), color='skyblue', alpha=0.7)
+    fig, ax = plt.subplots(figsize=(6, 4))  # Reduced size
+    ax.barh(y_pos, range_data['base'], color='skyblue', alpha=0.7)
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(stats.index)
-    ax.set_xlabel('Base Salary Range ($)')
-    ax.set_title('Base Salary Range by Functional Area')
+    ax.set_yticklabels(stats.index, fontsize=8)
+    ax.set_xlabel('Base Salary Range ($)', fontsize=9)
+    ax.set_title('Base Salary Range', fontsize=10)
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     plt.tight_layout()
     st.pyplot(fig)
+    plt.close(fig)
+    
 with col2:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    y_pos = range(len(stats))
-    bars = ax.barh(y_pos, stats['Benefit Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))), color='orange', alpha=0.7)
+    fig, ax = plt.subplots(figsize=(6, 4))  # Reduced size
+    ax.barh(y_pos, range_data['benefit'], color='orange', alpha=0.7)
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(stats.index)
-    ax.set_xlabel('Benefit Range ($)')
-    ax.set_title('Benefit Range by Functional Area')
+    ax.set_yticklabels(stats.index, fontsize=8)
+    ax.set_xlabel('Benefit Range ($)', fontsize=9)
+    ax.set_title('Benefit Range', fontsize=10)
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     plt.tight_layout()
     st.pyplot(fig)
+    plt.close(fig)
+    
 with col3:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    y_pos = range(len(stats))
-    bars = ax.barh(y_pos, stats['Total Range'].apply(lambda x: float(str(x).replace("$","").replace(",",""))), color='green', alpha=0.7)
+    fig, ax = plt.subplots(figsize=(6, 4))  # Reduced size
+    ax.barh(y_pos, range_data['total'], color='green', alpha=0.7)
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(stats.index)
-    ax.set_xlabel('Total Compensation Range ($)')
-    ax.set_title('Total Compensation Range by Functional Area')
+    ax.set_yticklabels(stats.index, fontsize=8)
+    ax.set_xlabel('Total Compensation Range ($)', fontsize=9)
+    ax.set_title('Total Compensation Range', fontsize=10)
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     plt.tight_layout()
     st.pyplot(fig)
+    plt.close(fig)
+
+# Memory cleanup
+del range_data, y_pos
 
 
 # Sample job titles for each role
