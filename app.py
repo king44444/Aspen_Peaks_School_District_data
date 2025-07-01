@@ -262,22 +262,45 @@ school_admin_stats = calculate_group_stats(school_admins)
 district_admin_stats = calculate_group_stats(district_admins)
 
 with st.expander("📋 Executive Summary - What the Data Shows", expanded=True):
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 🏫 Teacher Compensation")
-        st.metric("Count", teacher_stats['base_salary_count'])
-        st.metric("Avg Base Salary", format_currency(teacher_stats['base_salary_mean']))
-        st.metric("Avg Benefits", format_currency(teacher_stats['benefits_mean']))
-        st.metric("Avg Total", format_currency(teacher_stats['total_compensation_mean']))
-    
-    with col2:
-        st.markdown("### 👥 Administrative Comparison")
-        st.metric("School Admin Count", school_admin_stats['base_salary_count'])
-        st.metric("School Admin Avg Total", format_currency(school_admin_stats['total_compensation_mean']))
-        if len(district_admins) > 0:
-            st.metric("District Admin Count", district_admin_stats['base_salary_count'])
-            st.metric("District Admin Avg Total", format_currency(district_admin_stats['total_compensation_mean']))
+    # Dynamic column layout based on whether district admins exist
+    if len(district_admins) > 0:
+        # Three columns when district admins exist
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("### 🏫 Teacher")
+            st.metric("Number of Teachers", teacher_stats['base_salary_count'])
+            st.metric("Avg Teacher Base Salary", format_currency(teacher_stats['base_salary_mean']))
+            # st.metric("Avg Teacher Benefits", format_currency(teacher_stats['benefits_mean']))
+            st.metric("Avg Teacher Total", format_currency(teacher_stats['total_compensation_mean']))
+        
+        with col2:
+            st.markdown("### 👥  Administration")
+            st.metric("Number of School Admins", school_admin_stats['base_salary_count'])
+            st.metric("Avg School Admin Base Salary", format_currency(school_admin_stats['base_salary_mean']))
+            st.metric("Avg School Admin Total", format_currency(school_admin_stats['total_compensation_mean']))
+        
+        with col3:
+            st.markdown("### 🏢 District")
+            st.metric("Number of District Admins", district_admin_stats['base_salary_count'])
+            st.metric("Avg District Admin Base Salary", format_currency(district_admin_stats['base_salary_mean']))
+            st.metric("Avg District Admin Total", format_currency(district_admin_stats['total_compensation_mean']))
+    else:
+        # Two columns when no district admins
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 🏫 Teacher Compensation")
+            st.metric("Number of Teachers", teacher_stats['base_salary_count'])
+            st.metric("Avg Teacher Base Salary", format_currency(teacher_stats['base_salary_mean']))
+            # st.metric("Avg Teacher Benefits", format_currency(teacher_stats['benefits_mean']))
+            st.metric("Avg Teacher Total", format_currency(teacher_stats['total_compensation_mean']))
+        
+        with col2:
+            st.markdown("### 👥 School Administration")
+            st.metric("Number of School Admins", school_admin_stats['base_salary_count'])
+            st.metric("Avg School Admin Base Salary", format_currency(school_admin_stats['base_salary_mean']))
+            st.metric("Avg School Admin Total", format_currency(school_admin_stats['total_compensation_mean']))
 
 st.markdown("---")
 
